@@ -1,0 +1,9 @@
+Flask
+PyPDF2
+langchain
+langchain-community
+langchain-openai
+faiss-cpu
+python-dotenv
+gunicorn
+Werkzeug
