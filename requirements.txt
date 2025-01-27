@@ -7,3 +7,5 @@ faiss-cpu
 python-dotenv
 gunicorn
 Werkzeug
+flask-cors
+
