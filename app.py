@@ -68,6 +68,9 @@ def generate_conversation_chain(vectorstore):
         return conversation_chain
     except Exception as e:
         return None, str(e)
+@app.route('/')
+def index():
+    return jsonify({"message": "Welcome to the Flask PDF Chat API! Use /upload to upload a PDF or /ask to ask questions."})
 
 @app.route('/health', methods=['GET'])
 def health_check():
