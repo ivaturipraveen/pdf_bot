@@ -67,10 +67,10 @@ def get_llm(model_key):
     }
     
     # DeepSeek Models
-    deepseek_models = {
-        'deepseek-chat': "deepseek-chat",
-        'deepseek-coder': "deepseek-coder"
-    }
+    # deepseek_models = {
+    #     'deepseek-chat': "deepseek-chat",
+    #     'deepseek-coder': "deepseek-coder"
+    # }
     
     try:
         # Handle OpenAI models
@@ -90,13 +90,13 @@ def get_llm(model_key):
             )
             
         # Handle DeepSeek models
-        elif model_key in deepseek_models:
-            return DeepSeekChatEndpoint(
-                deepseek_api_key=MODEL_KEYS[model_key],
-                model_name=deepseek_models[model_key],
-                temperature=0.7,
-                api_base="https://api.deepseek.com/v1",  # Update with correct API base URL
-            )
+        # elif model_key in deepseek_models:
+        #     return DeepSeekChatEndpoint(
+        #         deepseek_api_key=MODEL_KEYS[model_key],
+        #         model_name=deepseek_models[model_key],
+        #         temperature=0.7,
+        #         api_base="https://api.deepseek.com/v1",  # Update with correct API base URL
+        #     )
         
         else:
             raise ValueError(f"Invalid model selected: {model_key}")
