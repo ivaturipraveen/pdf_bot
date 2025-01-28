@@ -10,7 +10,6 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
-from langchain_community.chat_models import DeepSeekChatEndpoint
 import logging
 from flask_cors import CORS
 
@@ -42,8 +41,6 @@ MODEL_KEYS = {
     'claude3-sonnet': os.getenv('ANTHROPIC_API_KEY'),
     'claude3-haiku': os.getenv('ANTHROPIC_API_KEY'),
     'claude2.1': os.getenv('ANTHROPIC_API_KEY'),
-    'deepseek-chat': os.getenv('DEEPSEEK_API_KEY'),
-    'deepseek-coder': os.getenv('DEEPSEEK_API_KEY'),
 }
 
 def get_llm(model_key):
@@ -66,12 +63,6 @@ def get_llm(model_key):
         'claude2.1': "claude-2.1"
     }
     
-    # DeepSeek Models
-    # deepseek_models = {
-    #     'deepseek-chat': "deepseek-chat",
-    #     'deepseek-coder': "deepseek-coder"
-    # }
-    
     try:
         # Handle OpenAI models
         if model_key in openai_models:
@@ -89,15 +80,6 @@ def get_llm(model_key):
                 temperature=0.7
             )
             
-        # Handle DeepSeek models
-        # elif model_key in deepseek_models:
-        #     return DeepSeekChatEndpoint(
-        #         deepseek_api_key=MODEL_KEYS[model_key],
-        #         model_name=deepseek_models[model_key],
-        #         temperature=0.7,
-        #         api_base="https://api.deepseek.com/v1",  # Update with correct API base URL
-        #     )
-        
         else:
             raise ValueError(f"Invalid model selected: {model_key}")
             
@@ -174,8 +156,7 @@ def index():
         },
         "available_models": {
             "OpenAI": ["gpt4", "gpt4-turbo", "gpt4-32k", "gpt3.5-turbo", "gpt4-vision"],
-            "Anthropic": ["claude3-opus", "claude3-sonnet", "claude3-haiku", "claude2.1"],
-            "DeepSeek": ["deepseek-chat", "deepseek-coder"]
+            "Anthropic": ["claude3-opus", "claude3-sonnet", "claude3-haiku", "claude2.1"]
         }
     })
 
