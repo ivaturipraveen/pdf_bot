@@ -45,8 +45,6 @@ MODEL_KEYS = {
 
 def get_llm(model_key):
     """Returns the appropriate language model based on the selected model."""
-    
-    # OpenAI Models
     openai_models = {
         'gpt4': "gpt-4",
         'gpt4-turbo': "gpt-4-turbo-preview",
@@ -55,7 +53,6 @@ def get_llm(model_key):
         'gpt4-vision': "gpt-4-vision-preview"
     }
     
-    # Anthropic Models
     claude_models = {
         'claude3-opus': "claude-3-opus-20240229",
         'claude3-sonnet': "claude-3-sonnet-20240229",
@@ -64,31 +61,26 @@ def get_llm(model_key):
     }
     
     try:
-        # Handle OpenAI models
         if model_key in openai_models:
             return ChatOpenAI(
                 api_key=MODEL_KEYS[model_key],
                 model_name=openai_models[model_key],
                 temperature=0.7
             )
-        
-        # Handle Claude models
         elif model_key in claude_models:
             return ChatAnthropic(
                 api_key=MODEL_KEYS[model_key],
                 model_name=claude_models[model_key],
                 temperature=0.7
             )
-            
         else:
             raise ValueError(f"Invalid model selected: {model_key}")
-            
     except Exception as e:
         logger.error(f"Error initializing model {model_key}: {str(e)}")
         raise Exception(f"Failed to initialize model {model_key}: {str(e)}")
 
 def extract_pdf_text(pdf_path):
-    """Extracts text from a PDF file with better error handling."""
+    """Extracts text from a PDF file."""
     try:
         pdf_reader = PdfReader(pdf_path)
         text = ""
@@ -100,7 +92,7 @@ def extract_pdf_text(pdf_path):
         return None, f"Failed to extract text: {str(e)}"
 
 def split_text_to_chunks(raw_text):
-    """Splits text into smaller chunks with improved chunking strategy."""
+    """Splits text into smaller chunks."""
     try:
         text_splitter = CharacterTextSplitter(
             separator="\n",
@@ -116,7 +108,7 @@ def split_text_to_chunks(raw_text):
         return None, f"Failed to split text: {str(e)}"
 
 def create_vectorstore(text_chunks, model_key):
-    """Creates a FAISS vector store with better error handling."""
+    """Creates a FAISS vector store."""
     try:
         embeddings = OpenAIEmbeddings(openai_api_key=MODEL_KEYS['gpt4'])  # Using OpenAI embeddings for all models
         vectorstore = FAISS.from_texts(text_chunks, embeddings)
@@ -151,8 +143,7 @@ def index():
     return jsonify({
         "message": "Welcome to the PDF Chat API", 
         "endpoints": {
-            "/upload": "POST - Upload a PDF file",
-            "/ask": "POST - Ask a question about the uploaded PDF"
+            "/ask": "POST - Ask a question about a PDF file"
         },
         "available_models": {
             "OpenAI": ["gpt4", "gpt4-turbo", "gpt4-32k", "gpt3.5-turbo", "gpt4-vision"],
@@ -160,55 +151,19 @@ def index():
         }
     })
 
-@app.route('/upload', methods=['POST'])
-def upload_pdf():
-    """Handles PDF upload and text extraction."""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
-
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-
-        if not file.filename.lower().endswith('.pdf'):
-            return jsonify({'error': 'Invalid file type. Only PDF files are allowed.'}), 400
-
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        
-        try:
-            file.save(filepath)
-            text, error = extract_pdf_text(filepath)
-            
-            if os.path.exists(filepath):
-                os.remove(filepath)
-            
-            if error:
-                return jsonify({'error': error}), 400
-
-            return jsonify({'text': text}), 200
-
-        except Exception as e:
-            if os.path.exists(filepath):
-                os.remove(filepath)
-            raise e
-
-    except Exception as e:
-        logger.error(f"Error in upload_pdf: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/ask', methods=['POST'])
 def ask_question():
-    """Handles question answering using the selected model."""
+    """Handles question answering using the uploaded PDF file."""
     try:
-        data = request.json
-        if not all(k in data for k in ['text', 'question', 'model_key']):
-            return jsonify({'error': 'Missing required fields'}), 400
+        if 'file' not in request.files or not request.form:
+            return jsonify({'error': 'PDF file and form data are required'}), 400
 
-        text = data['text']
-        question = data['question']
-        model_key = data['model_key']
+        file = request.files['file']
+        question = request.form.get('question')
+        model_key = request.form.get('model_key')
+
+        if not question or not model_key:
+            return jsonify({'error': 'Question and model key are required'}), 400
 
         if model_key not in MODEL_KEYS:
             return jsonify({'error': f'Invalid model selected: {model_key}'}), 400
@@ -216,27 +171,47 @@ def ask_question():
         if not MODEL_KEYS[model_key]:
             return jsonify({'error': f'API key not configured for {model_key}'}), 400
 
-        chunks, error = split_text_to_chunks(text)
-        if error:
-            return jsonify({'error': error}), 400
+        if file.filename == '' or not file.filename.lower().endswith('.pdf'):
+            return jsonify({'error': 'A valid PDF file is required'}), 400
 
-        vectorstore, error = create_vectorstore(chunks, model_key)
-        if error:
-            return jsonify({'error': error}), 400
+        # Save and process the PDF file
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
 
-        conversation_chain, error = generate_conversation_chain(vectorstore, model_key)
-        if error:
-            return jsonify({'error': error}), 400
+        try:
+            text, error = extract_pdf_text(filepath)
+            os.remove(filepath)
 
-        response = conversation_chain.invoke({
-            "question": question,
-            "chat_history": []
-        })
+            if error:
+                return jsonify({'error': error}), 400
 
-        return jsonify({
-            'response': response['answer'],
-            'sources': [doc.page_content[:200] + "..." for doc in response.get('source_documents', [])]
-        }), 200
+            chunks, error = split_text_to_chunks(text)
+            if error:
+                return jsonify({'error': error}), 400
+
+            vectorstore, error = create_vectorstore(chunks, model_key)
+            if error:
+                return jsonify({'error': error}), 400
+
+            conversation_chain, error = generate_conversation_chain(vectorstore, model_key)
+            if error:
+                return jsonify({'error': error}), 400
+
+            response = conversation_chain.invoke({
+                "question": question,
+                "chat_history": []
+            })
+
+            return jsonify({
+                'response': response['answer'],
+                'sources': [doc.page_content[:200] + "..." for doc in response.get('source_documents', [])]
+            }), 200
+
+        except Exception as e:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            raise e
 
     except Exception as e:
         logger.error(f"Error in ask_question: {str(e)}")
