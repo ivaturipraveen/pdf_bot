@@ -90,41 +90,46 @@ def chat():
     if not user_id or not pdf_id or not question:
         return jsonify({'error': 'User ID, PDF ID, and question are required'}), 400
 
-    if file:
-        # Store PDF in S3
-        filename = secure_filename(file.filename)
-        filepath = f"/tmp/{filename}"
-    
-        # Read and save the file immediately
-        file_content = file.read()  # Read the file before Flask auto-closes it
-        with open(filepath, "wb") as f:
-            f.write(file_content)  # Save to a local temporary file
-    
-        s3_client.upload_fileobj(BytesIO(file_content), AWS_S3_BUCKET, f"{user_id}/{pdf_id}.pdf")
-    
-        # Process PDF
-        raw_text = extract_pdf_text(filepath)
-        text_chunks = split_text_to_chunks(raw_text)
-        vectorstore = create_vectorstore(text_chunks, user_id, pdf_id)
-    
-        # Cleanup
-        os.remove(filepath)
+    # Step 1: Check if FAISS index already exists
+    vectorstore = load_faiss_from_s3(user_id, pdf_id)
 
-    else:
-        vectorstore = load_faiss_from_s3(user_id, pdf_id)
-        if not vectorstore:
-            return jsonify({'error': 'No stored data found for this user and PDF'}), 400
-    
-    # Load chat history
+    if file:
+        # If FAISS exists, skip reprocessing
+        if vectorstore:
+            print("FAISS index found, skipping reprocessing.")
+        else:
+            # Step 2: Process and store the new PDF if FAISS doesn't exist
+            filename = secure_filename(file.filename)
+            filepath = f"/tmp/{filename}"
+
+            file_content = file.read()  
+            with open(filepath, "wb") as f:
+                f.write(file_content)  
+
+            s3_client.upload_fileobj(BytesIO(file_content), AWS_S3_BUCKET, f"{user_id}/{pdf_id}.pdf")
+
+            raw_text = extract_pdf_text(filepath)
+            text_chunks = split_text_to_chunks(raw_text)
+            vectorstore = create_vectorstore(text_chunks, user_id, pdf_id)
+
+            os.remove(filepath)
+
+    if not vectorstore:
+        return jsonify({'error': 'No stored data found for this user and PDF'}), 400
+
+    # Step 3: Load chat history
     chat_history = load_from_s3(f"{user_id}/{pdf_id}/chat_history.pkl") or []
     conversation_chain = generate_conversation_chain(vectorstore, chat_history)
+    
+    # Step 4: Get response
     response = conversation_chain.invoke({"question": question})
     
-    # Update chat history and save back to S3
+    # Step 5: Update and save chat history
     chat_history.append((question, response.get("answer", "No answer available")))
     save_to_s3(chat_history, f"{user_id}/{pdf_id}/chat_history.pkl")
-    
+
     return jsonify({'response': response.get("answer", "No answer available")}), 200
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
