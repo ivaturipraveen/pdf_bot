@@ -93,15 +93,23 @@ def chat():
     if file:
         # Store PDF in S3
         filename = secure_filename(file.filename)
-        s3_client.upload_fileobj(file, AWS_S3_BUCKET, f"{user_id}/{pdf_id}.pdf")
-        
-        # Process PDF
         filepath = f"/tmp/{filename}"
-        file.save(filepath)
+    
+        # Read and save the file immediately
+        file_content = file.read()  # Read the file before Flask auto-closes it
+        with open(filepath, "wb") as f:
+            f.write(file_content)  # Save to a local temporary file
+    
+        s3_client.upload_fileobj(BytesIO(file_content), AWS_S3_BUCKET, f"{user_id}/{pdf_id}.pdf")
+    
+        # Process PDF
         raw_text = extract_pdf_text(filepath)
         text_chunks = split_text_to_chunks(raw_text)
         vectorstore = create_vectorstore(text_chunks, user_id, pdf_id)
+    
+        # Cleanup
         os.remove(filepath)
+
     else:
         vectorstore = load_faiss_from_s3(user_id, pdf_id)
         if not vectorstore:
