@@ -1,6 +1,6 @@
 import os
 import boto3
-import pickle
+import json
 from io import BytesIO
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
@@ -25,26 +25,39 @@ load_dotenv()
 AWS_S3_BUCKET = "testing-bart-1"
 s3_client = boto3.client("s3")
 
-def save_to_s3(data, key):
-    """Save data to S3 as a pickle file."""
-    pickle_buffer = BytesIO()
-    pickle.dump(data, pickle_buffer)
-    pickle_buffer.seek(0)
-    s3_client.upload_fileobj(pickle_buffer, AWS_S3_BUCKET, key)
 
-def load_from_s3(key):
-    """Load data from S3."""
+def file_exists_in_s3(bucket, key):
+    """Check if a file exists in S3."""
+    try:
+        s3_client.head_object(Bucket=bucket, Key=key)
+        return True
+    except Exception:
+        return False
+
+
+def save_to_s3_json(data, key):
+    """Save data to S3 as a JSON file."""
+    json_buffer = BytesIO()
+    json_buffer.write(json.dumps(data).encode('utf-8'))
+    json_buffer.seek(0)
+    s3_client.upload_fileobj(json_buffer, AWS_S3_BUCKET, key)
+
+
+def load_from_s3_json(key):
+    """Load JSON data from S3."""
     try:
         response = s3_client.get_object(Bucket=AWS_S3_BUCKET, Key=key)
-        return pickle.load(response['Body'])
+        return json.loads(response['Body'].read().decode('utf-8'))
     except Exception:
         return None
+
 
 def save_faiss_to_s3(vectorstore, user_id, pdf_id):
     """Save FAISS index to S3 under user_id/pdf_id."""
     vectorstore.save_local("/tmp/faiss_index")
     s3_client.upload_file("/tmp/faiss_index/index.faiss", AWS_S3_BUCKET, f"{user_id}/{pdf_id}/index.faiss")
     s3_client.upload_file("/tmp/faiss_index/index.pkl", AWS_S3_BUCKET, f"{user_id}/{pdf_id}/index.pkl")
+
 
 def load_faiss_from_s3(user_id, pdf_id):
     """Load FAISS index from S3 for a specific user and PDF."""
@@ -56,15 +69,18 @@ def load_faiss_from_s3(user_id, pdf_id):
     except Exception:
         return None
 
+
 def extract_pdf_text(pdf_path):
     """Extracts text from a single PDF file."""
     pdf_reader = PdfReader(pdf_path)
     return "".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
 
+
 def split_text_to_chunks(raw_text):
     """Splits text into smaller chunks."""
     text_splitter = CharacterTextSplitter(separator="\n", chunk_size=500, chunk_overlap=200, length_function=len)
     return text_splitter.split_text(raw_text)
+
 
 def create_vectorstore(text_chunks, user_id, pdf_id):
     """Creates and saves a FAISS vector store."""
@@ -72,12 +88,14 @@ def create_vectorstore(text_chunks, user_id, pdf_id):
     save_faiss_to_s3(vectorstore, user_id, pdf_id)
     return vectorstore
 
+
 def generate_conversation_chain(vectorstore, chat_history):
     """Creates a conversational retrieval chain."""
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     memory.chat_memory.messages = chat_history
     llm = ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"))
     return ConversationalRetrievalChain.from_llm(llm=llm, retriever=vectorstore.as_retriever(), memory=memory)
+
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -94,19 +112,21 @@ def chat():
     vectorstore = load_faiss_from_s3(user_id, pdf_id)
 
     if file:
-        # If FAISS exists, skip reprocessing
-        if vectorstore:
-            print("FAISS index found, skipping reprocessing.")
+        s3_pdf_key = f"{user_id}/{pdf_id}.pdf"
+
+        # Step 2: If FAISS exists and PDF already exists, skip processing
+        if vectorstore and file_exists_in_s3(AWS_S3_BUCKET, s3_pdf_key):
+            print("PDF and FAISS index found, skipping reprocessing.")
         else:
-            # Step 2: Process and store the new PDF if FAISS doesn't exist
+            # Process and store the new PDF
             filename = secure_filename(file.filename)
             filepath = f"/tmp/{filename}"
 
-            file_content = file.read()  
+            file_content = file.read()
             with open(filepath, "wb") as f:
-                f.write(file_content)  
+                f.write(file_content)
 
-            s3_client.upload_fileobj(BytesIO(file_content), AWS_S3_BUCKET, f"{user_id}/{pdf_id}.pdf")
+            s3_client.upload_fileobj(BytesIO(file_content), AWS_S3_BUCKET, s3_pdf_key)
 
             raw_text = extract_pdf_text(filepath)
             text_chunks = split_text_to_chunks(raw_text)
@@ -118,15 +138,17 @@ def chat():
         return jsonify({'error': 'No stored data found for this user and PDF'}), 400
 
     # Step 3: Load chat history
-    chat_history = load_from_s3(f"{user_id}/{pdf_id}/chat_history.pkl") or []
+    chat_history_key = f"{user_id}/{pdf_id}/chat_history.json"
+    chat_history = load_from_s3_json(chat_history_key) or []
+
     conversation_chain = generate_conversation_chain(vectorstore, chat_history)
-    
+
     # Step 4: Get response
     response = conversation_chain.invoke({"question": question})
-    
+
     # Step 5: Update and save chat history
-    chat_history.append((question, response.get("answer", "No answer available")))
-    save_to_s3(chat_history, f"{user_id}/{pdf_id}/chat_history.pkl")
+    chat_history.append({"question": question, "answer": response.get("answer", "No answer available")})
+    save_to_s3_json(chat_history, chat_history_key)
 
     return jsonify({'response': response.get("answer", "No answer available")}), 200
 
