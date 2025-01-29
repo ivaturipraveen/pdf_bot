@@ -8,11 +8,10 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
-from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
-from langchain_openai import ChatOpenAI
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -38,7 +37,7 @@ def file_exists_in_s3(bucket, key):
 def save_to_s3_json(data, key):
     """Save data to S3 as a JSON file."""
     json_buffer = BytesIO()
-    json_buffer.write(json.dumps(data).encode('utf-8'))
+    json_buffer.write(json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8'))
     json_buffer.seek(0)
     s3_client.upload_fileobj(json_buffer, AWS_S3_BUCKET, key)
 
@@ -91,8 +90,13 @@ def create_vectorstore(text_chunks, user_id, pdf_id):
 
 def generate_conversation_chain(vectorstore, chat_history):
     """Creates a conversational retrieval chain."""
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    memory.chat_memory.messages = chat_history
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key="answer")
+    
+    # Convert chat history from JSON (plain text) to LangChain message objects
+    for entry in chat_history:
+        memory.chat_memory.add_user_message(entry["question"])
+        memory.chat_memory.add_ai_message(entry["answer"])
+
     llm = ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"))
     return ConversationalRetrievalChain.from_llm(llm=llm, retriever=vectorstore.as_retriever(), memory=memory)
 
@@ -146,8 +150,11 @@ def chat():
     # Step 4: Get response
     response = conversation_chain.invoke({"question": question})
 
-    # Step 5: Update and save chat history
-    chat_history.append({"question": question, "answer": response.get("answer", "No answer available")})
+    # Step 5: Update and save chat history (Only storing plain text, not objects)
+    chat_history.append({
+        "question": question,
+        "answer": response.get("answer", "No answer available")
+    })
     save_to_s3_json(chat_history, chat_history_key)
 
     return jsonify({'response': response.get("answer", "No answer available")}), 200
@@ -155,3 +162,4 @@ def chat():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
+
