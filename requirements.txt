@@ -2,11 +2,11 @@ Flask
 PyPDF2
 langchain
 langchain-community
-langchain-anthropic
 langchain-openai
 faiss-cpu
 python-dotenv
 gunicorn
 Werkzeug
 flask-cors
+boto3
 
